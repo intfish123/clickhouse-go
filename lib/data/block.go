@@ -24,17 +24,19 @@ type Block struct {
 	offsets    []offset
 	buffers    []*buffer
 	info       blockInfo
+
+	Wg         sync.WaitGroup
+	ThreadSize int
+	AppendChan []chan *Payload
+	ErrChan    chan error
+	Err        error
+	WgErr      sync.WaitGroup
 }
 
 type Payload struct {
 	Idx int
 	Col column.Column
 	Val driver.Value
-
-	ErrChan    chan error
-	Wg         *sync.WaitGroup
-	ThreadPool chan int
-	ThreadNo   int
 }
 
 func (block *Block) Copy() *Block {
@@ -141,31 +143,73 @@ func (block *Block) writeArray(column column.Column, value Value, num, level int
 	return nil
 }
 
-func (block *Block) asyncAppendRow(payload *Payload) {
-	defer func() {
-		payload.Wg.Done()
-		payload.ThreadPool <- payload.ThreadNo
+func (block *Block) StartAppendRow(threadSize int) {
+	block.ThreadSize = threadSize
+	block.Err = nil
+	block.ErrChan = make(chan error, 1000)
+	for i := 0; i < block.ThreadSize; i++ {
+		block.AppendChan[i] = make(chan *Payload, 1000)
+	}
+
+	block.WgErr.Add(1)
+	go func() {
+		defer block.WgErr.Done()
+		for e := range block.ErrChan {
+			if e != nil {
+				log.Println(e)
+				block.Err = e
+			}
+		}
 	}()
-	num := payload.Idx
-	c := payload.Col
-	param := payload.Val
-	errCh := payload.ErrChan
-	switch column := c.(type) {
-	case *column.Array:
-		value := reflect.ValueOf(param)
-		if value.Kind() != reflect.Slice {
-			errCh <- fmt.Errorf("unsupported Array(T) type [%T]", value.Interface())
-		}
-		if err := block.writeArray(c, newValue(value), num, 1); err != nil {
-			errCh <- err
-		}
-	case *column.Nullable:
-		if err := column.WriteNull(block.buffers[num].Offset, block.buffers[num].Column, param); err != nil {
-			errCh <- err
-		}
-	default:
-		if err := column.Write(block.buffers[num].Column, param); err != nil {
-			errCh <- err
+
+	for i := 0; i < block.ThreadSize; i++ {
+		block.Wg.Add(1)
+		go block.asyncAppendRow(block.AppendChan[i])
+	}
+}
+func (block *Block) EndAppendRow() error {
+
+	//首先关闭写入的chan
+	for i := 0; i < block.ThreadSize; i++ {
+		close(block.AppendChan[i])
+	}
+	block.Wg.Wait()
+
+	//关闭接受错误的chan
+	close(block.ErrChan)
+	block.WgErr.Wait()
+	if block.Err != nil {
+		return block.Err
+	}
+	return nil
+}
+
+func (block *Block) asyncAppendRow(payloadChan chan *Payload) {
+	defer func() {
+		block.Wg.Done()
+	}()
+	for payload := range payloadChan {
+		num := payload.Idx
+		c := payload.Col
+		param := payload.Val
+		errCh := block.ErrChan
+		switch column := c.(type) {
+		case *column.Array:
+			value := reflect.ValueOf(param)
+			if value.Kind() != reflect.Slice {
+				errCh <- fmt.Errorf("unsupported Array(T) type [%T]", value.Interface())
+			}
+			if err := block.writeArray(c, newValue(value), num, 1); err != nil {
+				errCh <- err
+			}
+		case *column.Nullable:
+			if err := column.WriteNull(block.buffers[num].Offset, block.buffers[num].Column, param); err != nil {
+				errCh <- err
+			}
+		default:
+			if err := column.Write(block.buffers[num].Column, param); err != nil {
+				errCh <- err
+			}
 		}
 	}
 }
@@ -179,49 +223,20 @@ func (block *Block) AppendRow(args []driver.Value) error {
 		block.NumRows++
 	}
 
-	// 并发写入
-	errCh := make(chan error, 10)
-	mWg := &sync.WaitGroup{}
-	mErrWg := &sync.WaitGroup{}
-	threadSize := 4
-	threadPool := make(chan int, threadSize)
-	for i := 0; i < threadSize; i++ {
-		threadPool <- i
-	}
-	var retErr error
-	mErrWg.Add(1)
-	go func() {
-		defer mErrWg.Done()
-		for e := range errCh {
-			if e != nil {
-				log.Println(e)
-				retErr = e
-			}
-		}
-	}()
 	for num, c := range block.Columns {
-		t := <-threadPool
 
 		idx := num
 		col := c
 		val := args[idx]
 
-		mWg.Add(1)
 		payload := &Payload{
-			Idx:        idx,
-			Col:        col,
-			Val:        val,
-			ErrChan:    errCh,
-			Wg:         mWg,
-			ThreadPool: threadPool,
-			ThreadNo:   t,
+			Idx: idx,
+			Col: col,
+			Val: val,
 		}
-		go block.asyncAppendRow(payload)
+		block.AppendChan[num%block.ThreadSize] <- payload
 	}
 
-	mWg.Wait()
-	close(errCh)
-	mErrWg.Wait()
 	//for num, c := range block.Columns {
 	//	switch column := c.(type) {
 	//	case *column.Array:
@@ -245,7 +260,7 @@ func (block *Block) AppendRow(args []driver.Value) error {
 
 	//return nil
 
-	return retErr
+	return nil
 }
 
 func (block *Block) Reserve() {
