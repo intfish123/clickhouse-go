@@ -144,6 +144,9 @@ func (block *Block) writeArray(column column.Column, value Value, num, level int
 }
 
 func (block *Block) StartAppendRow(threadSize int) {
+	if threadSize <= 0 {
+		threadSize = 1
+	}
 	block.ThreadSize = threadSize
 	block.Err = nil
 	block.ErrChan = make(chan error, 1000)
