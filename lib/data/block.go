@@ -25,12 +25,13 @@ type Block struct {
 	buffers    []*buffer
 	info       blockInfo
 
-	Wg         sync.WaitGroup
-	ThreadSize int
-	AppendChan []chan *Payload
-	ErrChan    chan error
-	Err        error
-	WgErr      sync.WaitGroup
+	Wg           sync.WaitGroup
+	ThreadSize   int
+	AppendChan   []chan *Payload
+	BatchColSize int
+	ErrChan      chan error
+	Err          error
+	WgErr        sync.WaitGroup
 }
 
 type Payload struct {
@@ -143,11 +144,18 @@ func (block *Block) writeArray(column column.Column, value Value, num, level int
 	return nil
 }
 
-func (block *Block) StartAppendRow(threadSize int) {
-	if threadSize <= 0 {
-		threadSize = 1
+func (block *Block) StartAppendRow(batchColSize int) {
+	if batchColSize <= 0 {
+		batchColSize = 500
 	}
-	block.ThreadSize = threadSize
+	block.BatchColSize = batchColSize
+	colSize := len(block.Columns)
+	if colSize%block.BatchColSize == 0 {
+		block.ThreadSize = colSize / block.BatchColSize
+	} else {
+		block.ThreadSize = int(colSize/block.BatchColSize) + 1
+	}
+
 	block.Err = nil
 	block.ErrChan = make(chan error, 1000)
 	for i := 0; i < block.ThreadSize; i++ {
@@ -226,6 +234,15 @@ func (block *Block) AppendRow(args []driver.Value) error {
 		block.NumRows++
 	}
 
+	ges := func(threadSize int, colBatchSize int, num int) int {
+		for i := 0; i < threadSize; i++ {
+			if num >= colBatchSize*i && num < (i+1)*colBatchSize {
+				return i
+			}
+		}
+		return 0
+	}
+
 	for num, c := range block.Columns {
 
 		idx := num
@@ -237,7 +254,8 @@ func (block *Block) AppendRow(args []driver.Value) error {
 			Col: col,
 			Val: val,
 		}
-		block.AppendChan[num%block.ThreadSize] <- payload
+		chIdx := ges(block.ThreadSize, block.BatchColSize, num)
+		block.AppendChan[chIdx] <- payload
 	}
 
 	//for num, c := range block.Columns {
