@@ -35,9 +35,9 @@ type Block struct {
 }
 
 type Payload struct {
-	Idx int
-	Col column.Column
-	Val driver.Value
+	//Idx int
+	Cols []column.Column
+	Vals []driver.Value
 }
 
 func (block *Block) Copy() *Block {
@@ -153,7 +153,7 @@ func (block *Block) StartAppendRow(batchColSize int) {
 	if colSize%block.BatchColSize == 0 {
 		block.ThreadSize = colSize / block.BatchColSize
 	} else {
-		block.ThreadSize = int(colSize/block.BatchColSize) + 1
+		block.ThreadSize = colSize/block.BatchColSize + 1
 	}
 
 	block.Err = nil
@@ -200,26 +200,25 @@ func (block *Block) asyncAppendRow(payloadChan chan *Payload) {
 		block.Wg.Done()
 	}()
 	for payload := range payloadChan {
-		num := payload.Idx
-		c := payload.Col
-		param := payload.Val
-		errCh := block.ErrChan
-		switch column := c.(type) {
-		case *column.Array:
-			value := reflect.ValueOf(param)
-			if value.Kind() != reflect.Slice {
-				errCh <- fmt.Errorf("unsupported Array(T) type [%T]", value.Interface())
-			}
-			if err := block.writeArray(c, newValue(value), num, 1); err != nil {
-				errCh <- err
-			}
-		case *column.Nullable:
-			if err := column.WriteNull(block.buffers[num].Offset, block.buffers[num].Column, param); err != nil {
-				errCh <- err
-			}
-		default:
-			if err := column.Write(block.buffers[num].Column, param); err != nil {
-				errCh <- err
+		for num, c := range payload.Cols {
+			errCh := block.ErrChan
+			switch column := c.(type) {
+			case *column.Array:
+				value := reflect.ValueOf(payload.Vals[num])
+				if value.Kind() != reflect.Slice {
+					errCh <- fmt.Errorf("unsupported Array(T) type [%T]", value.Interface())
+				}
+				if err := block.writeArray(c, newValue(value), num, 1); err != nil {
+					errCh <- err
+				}
+			case *column.Nullable:
+				if err := column.WriteNull(block.buffers[num].Offset, block.buffers[num].Column, payload.Vals[num]); err != nil {
+					errCh <- err
+				}
+			default:
+				if err := column.Write(block.buffers[num].Column, payload.Vals[num]); err != nil {
+					errCh <- err
+				}
 			}
 		}
 	}
@@ -234,28 +233,17 @@ func (block *Block) AppendRow(args []driver.Value) error {
 		block.NumRows++
 	}
 
-	ges := func(threadSize int, colBatchSize int, num int) int {
-		for i := 0; i < threadSize; i++ {
-			if num >= colBatchSize*i && num < (i+1)*colBatchSize {
-				return i
-			}
+	for i := 0; i < block.ThreadSize; i++ {
+		sIdx := block.BatchColSize * i
+		eIdx := block.BatchColSize * (i + 1)
+		if eIdx > len(block.Columns) {
+			eIdx = len(block.Columns)
 		}
-		return 0
-	}
-
-	for num, c := range block.Columns {
-
-		idx := num
-		col := c
-		val := args[idx]
-
 		payload := &Payload{
-			Idx: idx,
-			Col: col,
-			Val: val,
+			Cols: block.Columns[sIdx:eIdx],
+			Vals: args[sIdx:eIdx],
 		}
-		chIdx := ges(block.ThreadSize, block.BatchColSize, num)
-		block.AppendChan[chIdx] <- payload
+		block.AppendChan[i] <- payload
 	}
 
 	//for num, c := range block.Columns {
