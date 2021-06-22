@@ -148,7 +148,7 @@ func (block *Block) StartAppendRow(threadSize int) {
 	block.Err = nil
 	block.ErrChan = make(chan error, 1000)
 	for i := 0; i < block.ThreadSize; i++ {
-		block.AppendChan[i] = make(chan *Payload, 1000)
+		block.AppendChan = append(block.AppendChan, make(chan *Payload, 1000))
 	}
 
 	block.WgErr.Add(1)
