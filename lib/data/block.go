@@ -36,6 +36,7 @@ type Block struct {
 
 type Payload struct {
 	//Idx int
+	Idx  []int
 	Cols []column.Column
 	Vals []driver.Value
 }
@@ -200,6 +201,7 @@ func (block *Block) asyncAppendRow(payloadChan chan *Payload) {
 		block.Wg.Done()
 	}()
 	for payload := range payloadChan {
+		idx := payload.Idx
 		for num, c := range payload.Cols {
 			errCh := block.ErrChan
 			switch column := c.(type) {
@@ -208,15 +210,15 @@ func (block *Block) asyncAppendRow(payloadChan chan *Payload) {
 				if value.Kind() != reflect.Slice {
 					errCh <- fmt.Errorf("unsupported Array(T) type [%T]", value.Interface())
 				}
-				if err := block.writeArray(c, newValue(value), num, 1); err != nil {
+				if err := block.writeArray(c, newValue(value), idx[num], 1); err != nil {
 					errCh <- err
 				}
 			case *column.Nullable:
-				if err := column.WriteNull(block.buffers[num].Offset, block.buffers[num].Column, payload.Vals[num]); err != nil {
+				if err := column.WriteNull(block.buffers[idx[num]].Offset, block.buffers[idx[num]].Column, payload.Vals[num]); err != nil {
 					errCh <- err
 				}
 			default:
-				if err := column.Write(block.buffers[num].Column, payload.Vals[num]); err != nil {
+				if err := column.Write(block.buffers[idx[num]].Column, payload.Vals[idx[num]]); err != nil {
 					errCh <- err
 				}
 			}
@@ -239,7 +241,12 @@ func (block *Block) AppendRow(args []driver.Value) error {
 		if eIdx > len(block.Columns) {
 			eIdx = len(block.Columns)
 		}
+		var indexs []int
+		for k := sIdx; k < eIdx; k++ {
+			indexs = append(indexs, k)
+		}
 		payload := &Payload{
+			Idx:  indexs,
 			Cols: block.Columns[sIdx:eIdx],
 			Vals: args[sIdx:eIdx],
 		}
