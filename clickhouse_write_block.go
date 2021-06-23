@@ -8,6 +8,12 @@ import (
 func (ch *clickhouse) writeBlock(block *data.Block, tableName string) error {
 	ch.Lock()
 	defer ch.Unlock()
+
+	appendErr := block.EndAppendRow()
+	if appendErr != nil {
+		ch.logf("error, appendErr: %v", appendErr)
+		return appendErr
+	}
 	if err := ch.encoder.Uvarint(protocol.ClientData); err != nil {
 		return err
 	}
@@ -37,10 +43,5 @@ func (ch *clickhouse) writeBlock(block *data.Block, tableName string) error {
 	err := block.Write(&ch.ServerInfo, ch.encoder)
 	ch.encoder.SelectCompress(false)
 
-	if err != nil {
-		_ = block.EndAppendRow()
-		return err
-	}
-	err = block.EndAppendRow()
 	return err
 }
