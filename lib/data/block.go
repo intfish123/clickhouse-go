@@ -193,11 +193,13 @@ func (block *Block) startAppendRow() {
 
 }
 func (block *Block) EndAppendRow() error {
-	if open := block.OpenFlag.Load(); open != nil {
-		if !open.(bool) {
-			log.Printf("block concurrent write is not open, openFlag: %v", open.(bool))
-			return nil
-		}
+	open := block.OpenFlag.Load()
+	if open == nil {
+		return nil
+	}
+	if !open.(bool) {
+		log.Printf("block concurrent write is not open, openFlag: %v", open.(bool))
+		return nil
 	}
 	block.OpenFlag.Store(false)
 
