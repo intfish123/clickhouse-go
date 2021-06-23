@@ -33,6 +33,7 @@ const (
 	DefaultReadTimeout = time.Minute
 	// DefaultWriteTimeout when sending queries
 	DefaultWriteTimeout = time.Minute
+	DefaultBatchColSize = 100
 )
 
 var (
@@ -101,7 +102,7 @@ func open(dsn string) (*clickhouse, error) {
 		writeTimeout         = DefaultWriteTimeout
 		connOpenStrategy     = connOpenRandom
 		poolSize             = 100
-		blockBatchColumnSize = 200
+		blockBatchColumnSize = DefaultBatchColSize
 	)
 	if len(database) == 0 {
 		database = DefaultDatabase

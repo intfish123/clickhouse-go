@@ -17,8 +17,6 @@ import (
 
 type offset [][]int
 
-const DefaultBatchColSize = 200
-
 type Block struct {
 	Values     [][]interface{}
 	Columns    []column.Column
@@ -158,9 +156,9 @@ func (block *Block) startAppendRow() {
 	}
 	block.OpenFlag.Store(true)
 
-	if block.BatchColSize <= 0 {
-		block.BatchColSize = DefaultBatchColSize
-	}
+	//if block.BatchColSize <= 0 {
+	//	block.BatchColSize = DefaultBatchColSize
+	//}
 	colSize := len(block.Columns)
 	if colSize%block.BatchColSize == 0 {
 		block.ThreadSize = colSize / block.BatchColSize
