@@ -36,5 +36,10 @@ func (ch *clickhouse) writeBlock(block *data.Block, tableName string) error {
 	ch.encoder.SelectCompress(ch.compress)
 	err := block.Write(&ch.ServerInfo, ch.encoder)
 	ch.encoder.SelectCompress(false)
+
+	if err != nil {
+		return err
+	}
+	err = block.EndAppendRow()
 	return err
 }

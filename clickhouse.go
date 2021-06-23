@@ -47,16 +47,17 @@ type clickhouse struct {
 	sync.Mutex
 	data.ServerInfo
 	data.ClientInfo
-	logf          logger
-	conn          *connect
-	block         *data.Block
-	buffer        *bufio.Writer
-	decoder       *binary.Decoder
-	encoder       *binary.Encoder
-	settings      *querySettings
-	compress      bool
-	blockSize     int
-	inTransaction bool
+	logf                 logger
+	conn                 *connect
+	block                *data.Block
+	buffer               *bufio.Writer
+	decoder              *binary.Decoder
+	encoder              *binary.Encoder
+	settings             *querySettings
+	compress             bool
+	blockSize            int
+	inTransaction        bool
+	blockBatchColumnSize int
 }
 
 func (ch *clickhouse) Prepare(query string) (driver.Stmt, error) {
@@ -92,6 +93,7 @@ func (ch *clickhouse) insert(ctx context.Context, query string) (_ driver.Stmt, 
 		return nil, err
 	}
 	if ch.block, err = ch.readMeta(); err != nil {
+		ch.block.BatchColSize = ch.blockBatchColumnSize
 		return nil, err
 	}
 	return &stmt{

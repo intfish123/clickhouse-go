@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ClickHouse/clickhouse-go/lib/binary"
 	"github.com/ClickHouse/clickhouse-go/lib/column"
@@ -15,6 +16,8 @@ import (
 )
 
 type offset [][]int
+
+const DefaultBatchColSize = 200
 
 type Block struct {
 	Values     [][]interface{}
@@ -32,6 +35,7 @@ type Block struct {
 	ErrChan      chan error
 	Err          error
 	WgErr        sync.WaitGroup
+	OpenFlag     atomic.Value // bool
 }
 
 type Payload struct {
@@ -145,11 +149,18 @@ func (block *Block) writeArray(column column.Column, value Value, num, level int
 	return nil
 }
 
-func (block *Block) StartAppendRow(batchColSize int) {
-	if batchColSize <= 0 {
-		batchColSize = 500
+func (block *Block) startAppendRow() {
+	if open := block.OpenFlag.Load(); open != nil {
+		if open.(bool) {
+			log.Printf("error, block concurrent write is open now, openFlag: %v", open.(bool))
+			return
+		}
 	}
-	block.BatchColSize = batchColSize
+	block.OpenFlag.Store(true)
+
+	if block.BatchColSize <= 0 {
+		block.BatchColSize = DefaultBatchColSize
+	}
 	colSize := len(block.Columns)
 	if colSize%block.BatchColSize == 0 {
 		block.ThreadSize = colSize / block.BatchColSize
@@ -159,6 +170,7 @@ func (block *Block) StartAppendRow(batchColSize int) {
 
 	block.Err = nil
 	block.ErrChan = make(chan error, 1000)
+	block.AppendChan = make([]chan *Payload, 0, block.ThreadSize)
 	for i := 0; i < block.ThreadSize; i++ {
 		block.AppendChan = append(block.AppendChan, make(chan *Payload, 1000))
 	}
@@ -178,8 +190,16 @@ func (block *Block) StartAppendRow(batchColSize int) {
 		block.Wg.Add(1)
 		go block.asyncAppendRow(block.AppendChan[i])
 	}
+
 }
 func (block *Block) EndAppendRow() error {
+	if open := block.OpenFlag.Load(); open != nil {
+		if !open.(bool) {
+			log.Printf("block concurrent write is not open, openFlag: %v", open.(bool))
+			return nil
+		}
+	}
+	block.OpenFlag.Store(false)
 
 	//首先关闭写入的chan
 	for i := 0; i < block.ThreadSize; i++ {
@@ -235,6 +255,14 @@ func (block *Block) AppendRow(args []driver.Value) error {
 		block.NumRows++
 	}
 
+	openFlag := block.OpenFlag.Load()
+	if openFlag == nil {
+		return fmt.Errorf("block concurrent write is not start, openFlag is nil")
+	}
+	if !openFlag.(bool) {
+		return fmt.Errorf("block concurrent write is not start")
+	}
+
 	for i := 0; i < block.ThreadSize; i++ {
 		sIdx := block.BatchColSize * i
 		eIdx := block.BatchColSize * (i + 1)
@@ -274,8 +302,6 @@ func (block *Block) AppendRow(args []driver.Value) error {
 	//	}
 	//}
 
-	//return nil
-
 	return nil
 }
 
@@ -295,6 +321,7 @@ func (block *Block) Reserve() {
 				columnBuffer: columnBuffer,
 			}
 		}
+		block.startAppendRow()
 	}
 }
 
