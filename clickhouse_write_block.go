@@ -38,6 +38,7 @@ func (ch *clickhouse) writeBlock(block *data.Block, tableName string) error {
 	ch.encoder.SelectCompress(false)
 
 	if err != nil {
+		_ = block.EndAppendRow()
 		return err
 	}
 	err = block.EndAppendRow()

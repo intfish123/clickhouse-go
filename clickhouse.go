@@ -94,6 +94,7 @@ func (ch *clickhouse) insert(ctx context.Context, query string) (_ driver.Stmt, 
 	}
 	if ch.block, err = ch.readMeta(); err != nil {
 		ch.block.BatchColSize = ch.blockBatchColumnSize
+		ch.logf("[block][BatchColSize] %d", ch.block.BatchColSize)
 		return nil, err
 	}
 	return &stmt{

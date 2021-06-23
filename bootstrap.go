@@ -85,22 +85,23 @@ func open(dsn string) (*clickhouse, error) {
 		return nil, err
 	}
 	var (
-		hosts            = []string{url.Host}
-		query            = url.Query()
-		secure           = false
-		skipVerify       = false
-		tlsConfigName    = query.Get("tls_config")
-		noDelay          = true
-		compress         = false
-		database         = query.Get("database")
-		username         = query.Get("username")
-		password         = query.Get("password")
-		blockSize        = 1000000
-		connTimeout      = DefaultConnTimeout
-		readTimeout      = DefaultReadTimeout
-		writeTimeout     = DefaultWriteTimeout
-		connOpenStrategy = connOpenRandom
-		poolSize         = 100
+		hosts                = []string{url.Host}
+		query                = url.Query()
+		secure               = false
+		skipVerify           = false
+		tlsConfigName        = query.Get("tls_config")
+		noDelay              = true
+		compress             = false
+		database             = query.Get("database")
+		username             = query.Get("username")
+		password             = query.Get("password")
+		blockSize            = 1000000
+		connTimeout          = DefaultConnTimeout
+		readTimeout          = DefaultReadTimeout
+		writeTimeout         = DefaultWriteTimeout
+		connOpenStrategy     = connOpenRandom
+		poolSize             = 100
+		blockBatchColumnSize = 200
 	)
 	if len(database) == 0 {
 		database = DefaultDatabase
@@ -137,6 +138,9 @@ func open(dsn string) (*clickhouse, error) {
 	if size, err := strconv.ParseInt(query.Get("pool_size"), 10, 64); err == nil {
 		poolSize = int(size)
 	}
+	if size, err := strconv.ParseInt(query.Get("block_batch_column_size"), 10, 64); err == nil {
+		blockBatchColumnSize = int(size)
+	}
 	poolInit.Do(func() {
 		leakypool.InitBytePool(poolSize)
 	})
@@ -167,10 +171,11 @@ func open(dsn string) (*clickhouse, error) {
 
 	var (
 		ch = clickhouse{
-			logf:      func(string, ...interface{}) {},
-			settings:  settings,
-			compress:  compress,
-			blockSize: blockSize,
+			logf:                 func(string, ...interface{}) {},
+			settings:             settings,
+			compress:             compress,
+			blockSize:            blockSize,
+			blockBatchColumnSize: blockBatchColumnSize,
 			ServerInfo: data.ServerInfo{
 				Timezone: time.Local,
 			},
