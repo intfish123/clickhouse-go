@@ -140,7 +140,9 @@ func open(dsn string) (*clickhouse, error) {
 		poolSize = int(size)
 	}
 	if size, err := strconv.ParseInt(query.Get("block_batch_column_size"), 10, 64); err == nil {
-		blockBatchColumnSize = int(size)
+		if size > 0 {
+			blockBatchColumnSize = int(size)
+		}
 	}
 	poolInit.Do(func() {
 		leakypool.InitBytePool(poolSize)
