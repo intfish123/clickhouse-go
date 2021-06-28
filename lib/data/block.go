@@ -238,7 +238,7 @@ func (block *Block) asyncAppendRow(payloadChan chan *Payload) {
 					errCh <- err
 				}
 			default:
-				if err := column.Write(block.buffers[idx[num]].Column, payload.Vals[idx[num]]); err != nil {
+				if err := column.Write(block.buffers[idx[num]].Column, payload.Vals[num]); err != nil {
 					errCh <- err
 				}
 			}
