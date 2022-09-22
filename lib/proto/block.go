@@ -20,15 +20,17 @@ package proto
 import (
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/ClickHouse/ch-go/proto"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/column"
 )
 
 type Block struct {
-	names   []string
-	Packet  byte
-	Columns []column.Interface
+	names           []string
+	Packet          byte
+	Columns         []column.Interface
+	WriteThreadSize int
 }
 
 func (b *Block) Rows() int {
@@ -55,12 +57,42 @@ func (b *Block) Append(v ...interface{}) (err error) {
 			Err: fmt.Errorf("clickhouse: expected %d arguments, got %d", len(columns), len(v)),
 		}
 	}
-	for i, v := range v {
-		if err := b.Columns[i].AppendRow(v); err != nil {
-			return &BlockError{
-				Op:         "AppendRow",
-				Err:        err,
-				ColumnName: columns[i].Name(),
+
+	if b.WriteThreadSize > 1 {
+		lastErr := atomic.Value{}
+		tp := make(chan int, b.WriteThreadSize)
+		for i := 0; i < b.WriteThreadSize; i++ {
+			tp <- i
+		}
+		for i, val := range v {
+			idx, vv := i, val
+			t := <-tp
+			go func() {
+				defer func() { tp <- t }()
+				if err := b.Columns[idx].AppendRow(vv); err != nil {
+					lastErr.Store(&BlockError{
+						Op:         "AppendRow",
+						Err:        err,
+						ColumnName: columns[idx].Name(),
+					})
+				}
+			}()
+		}
+		for i := 0; i < b.WriteThreadSize; i++ {
+			<-tp
+		}
+		if lastErr.Load() != nil {
+			return lastErr.Load().(*BlockError)
+		}
+
+	} else {
+		for i, v := range v {
+			if err := b.Columns[i].AppendRow(v); err != nil {
+				return &BlockError{
+					Op:         "AppendRow",
+					Err:        err,
+					ColumnName: columns[i].Name(),
+				}
 			}
 		}
 	}
