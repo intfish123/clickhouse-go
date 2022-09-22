@@ -170,6 +170,10 @@ func (b *batch) Flush() error {
 	return nil
 }
 
+func (b *batch) SetWriteThreadSize(ts int) {
+	b.block.WriteThreadSize = ts
+}
+
 type batchColumn struct {
 	err     error
 	batch   driver.Batch
