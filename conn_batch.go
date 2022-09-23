@@ -169,6 +169,9 @@ func (b *batch) Flush() error {
 	if b.err != nil {
 		return b.err
 	}
+	if err := b.block.CloseConcurrentWrite(); err != nil {
+		return err
+	}
 	if b.block.Rows() != 0 {
 		if err := b.conn.sendData(b.block, ""); err != nil {
 			return err
