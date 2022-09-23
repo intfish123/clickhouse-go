@@ -200,8 +200,8 @@ func (b *httpBatch) Send() (err error) {
 	return err
 }
 
-func (b *httpBatch) SetWriteThreadSize(ts int) {
-	b.block.WriteThreadSize = ts
+func (b *httpBatch) SetColBatchSize(ts int) {
+	b.block.ColBatchSize = ts
 }
 
 var _ driver.Batch = (*httpBatch)(nil)

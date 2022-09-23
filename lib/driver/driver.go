@@ -84,7 +84,7 @@ type (
 		Flush() error
 		Send() error
 		IsSent() bool
-		SetWriteThreadSize(int)
+		SetColBatchSize(int)
 	}
 	BatchColumn interface {
 		Append(interface{}) error

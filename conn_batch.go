@@ -90,6 +90,11 @@ func (b *batch) Append(v ...interface{}) error {
 	if b.sent {
 		return ErrBatchAlreadySent
 	}
+	if !b.block.ConcurrentWriteFlag.Load() {
+		if err := b.block.OpenConcurrentWrite(); err != nil {
+			return err
+		}
+	}
 	if err := b.block.Append(v...); err != nil {
 		b.release(err)
 		return err
@@ -140,6 +145,9 @@ func (b *batch) Send() (err error) {
 	if b.err != nil {
 		return b.err
 	}
+	if err = b.block.CloseConcurrentWrite(); err != nil {
+		return err
+	}
 	if b.block.Rows() != 0 {
 		if err = b.conn.sendData(b.block, ""); err != nil {
 			return err
@@ -170,8 +178,8 @@ func (b *batch) Flush() error {
 	return nil
 }
 
-func (b *batch) SetWriteThreadSize(ts int) {
-	b.block.WriteThreadSize = ts
+func (b *batch) SetColBatchSize(ts int) {
+	b.block.ColBatchSize = ts
 }
 
 type batchColumn struct {

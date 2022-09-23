@@ -20,6 +20,7 @@ package proto
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 
 	"github.com/ClickHouse/ch-go/proto"
@@ -27,10 +28,99 @@ import (
 )
 
 type Block struct {
-	names           []string
-	Packet          byte
-	Columns         []column.Interface
-	WriteThreadSize int
+	names               []string
+	Packet              byte
+	Columns             []column.Interface
+	ConcurrentWriteFlag atomic.Bool
+	writeThreadSize     int
+	ColBatchSize        int
+	writeChans          []chan *Payload
+	wg                  sync.WaitGroup
+	lastErr             atomic.Value
+}
+type Payload struct {
+	idxs []int
+	vals []interface{}
+}
+
+func (b *Block) OpenConcurrentWrite() error {
+	cbs := b.ColBatchSize
+	if cbs <= 50 {
+		return fmt.Errorf("please set ColBatchSize and ColBatchSize must grather 50")
+	}
+	if b.ConcurrentWriteFlag.Load() {
+		return fmt.Errorf("concurrentWrite has opened")
+	}
+	wts := len(b.Columns) / cbs
+	if len(b.Columns)%cbs != 0 {
+		wts++
+	}
+	if wts <= 0 {
+		wts = 1
+	}
+	b.writeThreadSize = wts
+	for i := 0; i < wts; i++ {
+		b.writeChans = append(b.writeChans, make(chan *Payload, 10000))
+	}
+	for _, writeChan := range b.writeChans {
+		ch := writeChan
+		b.wg.Add(1)
+		go func() {
+			defer b.wg.Done()
+			for {
+				for p := range ch {
+					if !b.ConcurrentWriteFlag.Load() {
+						b.lastErr.Store(&BlockError{
+							Op:         "AppendRow",
+							Err:        fmt.Errorf("concurrentWrite is closed"),
+							ColumnName: "",
+						})
+						return
+					}
+					if len(p.idxs) != len(p.vals) {
+						b.lastErr.Store(&BlockError{
+							Op:         "AppendRow",
+							Err:        fmt.Errorf("idxs size is not equal vals size"),
+							ColumnName: "",
+						})
+						return
+					}
+					for i, idx := range p.idxs {
+						if err := b.Columns[idx].AppendRow(p.vals[i]); err != nil {
+							b.lastErr.Store(&BlockError{
+								Op:         "AppendRow",
+								Err:        err,
+								ColumnName: b.Columns[idx].Name(),
+							})
+							return
+						}
+						//fmt.Printf("%d -> %d: %v\n", i, idx, p.vals[i])
+					}
+				}
+			}
+		}()
+	}
+	b.ConcurrentWriteFlag.Store(true)
+	return nil
+}
+
+func (b *Block) CloseConcurrentWrite() error {
+	if !b.ConcurrentWriteFlag.Load() {
+		return nil
+	}
+	for _, writeChan := range b.writeChans {
+		close(writeChan)
+	}
+	b.ConcurrentWriteFlag.Store(false)
+	b.wg.Wait()
+	if b.lastErr.Load() != nil {
+		err := b.lastErr.Load()
+		if e, ok := err.(*BlockError); ok {
+			return e
+		}
+		return fmt.Errorf("unexpected error")
+	}
+	return nil
 }
 
 func (b *Block) Rows() int {
@@ -58,36 +148,36 @@ func (b *Block) Append(v ...interface{}) (err error) {
 		}
 	}
 
-	if b.WriteThreadSize > 1 {
-		lastErr := atomic.Value{}
-		tp := make(chan int, b.WriteThreadSize)
-		for i := 0; i < b.WriteThreadSize; i++ {
-			tp <- i
-		}
-		for i, val := range v {
-			idx, vv := i, val
-			t := <-tp
-			go func() {
-				defer func() { tp <- t }()
-				if err := b.Columns[idx].AppendRow(vv); err != nil {
-					lastErr.Store(&BlockError{
-						Op:         "AppendRow",
-						Err:        err,
-						ColumnName: columns[idx].Name(),
-					})
-				}
-			}()
-		}
-		for i := 0; i < b.WriteThreadSize; i++ {
-			<-tp
-		}
-		if lastErr.Load() != nil {
-			return lastErr.Load().(*BlockError)
+	if b.ConcurrentWriteFlag.Load() {
+		if len(v) == 0 {
+			return nil
 		}
 
+		beginIdx := 0
+		for i := 0; i < b.writeThreadSize; i++ {
+			if beginIdx >= len(columns) {
+				break
+			}
+			endIdx := beginIdx + b.ColBatchSize
+			if endIdx > len(columns) {
+				endIdx = len(columns)
+			}
+			if beginIdx == endIdx {
+				break
+			}
+			var tmpIdx []int
+			var tmpVal []interface{}
+			for j := beginIdx; j < endIdx; j++ {
+				tmpIdx = append(tmpIdx, j)
+				tmpVal = append(tmpVal, v[j])
+			}
+			b.writeChans[i] <- &Payload{idxs: tmpIdx, vals: tmpVal}
+
+			beginIdx += b.ColBatchSize
+		}
 	} else {
-		for i, v := range v {
-			if err := b.Columns[i].AppendRow(v); err != nil {
+		for i, val := range v {
+			if err := b.Columns[i].AppendRow(val); err != nil {
 				return &BlockError{
 					Op:         "AppendRow",
 					Err:        err,
