@@ -67,35 +67,33 @@ func (b *Block) OpenConcurrentWrite() error {
 		b.wg.Add(1)
 		go func() {
 			defer b.wg.Done()
-			for {
-				for p := range ch {
-					if !b.ConcurrentWriteFlag.Load() {
+			for p := range ch {
+				if !b.ConcurrentWriteFlag.Load() {
+					b.lastErr.Store(&BlockError{
+						Op:         "AppendRow",
+						Err:        fmt.Errorf("concurrentWrite is closed"),
+						ColumnName: "",
+					})
+					return
+				}
+				if len(p.idxs) != len(p.vals) {
+					b.lastErr.Store(&BlockError{
+						Op:         "AppendRow",
+						Err:        fmt.Errorf("idxs size is not equal vals size"),
+						ColumnName: "",
+					})
+					return
+				}
+				for i, idx := range p.idxs {
+					if err := b.Columns[idx].AppendRow(p.vals[i]); err != nil {
 						b.lastErr.Store(&BlockError{
 							Op:         "AppendRow",
-							Err:        fmt.Errorf("concurrentWrite is closed"),
-							ColumnName: "",
+							Err:        err,
+							ColumnName: b.Columns[idx].Name(),
 						})
 						return
 					}
-					if len(p.idxs) != len(p.vals) {
-						b.lastErr.Store(&BlockError{
-							Op:         "AppendRow",
-							Err:        fmt.Errorf("idxs size is not equal vals size"),
-							ColumnName: "",
-						})
-						return
-					}
-					for i, idx := range p.idxs {
-						if err := b.Columns[idx].AppendRow(p.vals[i]); err != nil {
-							b.lastErr.Store(&BlockError{
-								Op:         "AppendRow",
-								Err:        err,
-								ColumnName: b.Columns[idx].Name(),
-							})
-							return
-						}
-						//fmt.Printf("%d -> %d: %v\n", i, idx, p.vals[i])
-					}
+					//fmt.Printf("%d -> %d: %v\n", i, idx, p.vals[i])
 				}
 			}
 		}()
