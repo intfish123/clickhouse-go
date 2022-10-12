@@ -145,9 +145,11 @@ func (b *batch) Send() (err error) {
 	if b.err != nil {
 		return b.err
 	}
+	st := time.Now()
 	if err = b.block.CloseConcurrentWrite(); err != nil {
 		return err
 	}
+	fmt.Printf("CloseConcurrentWrite duration %v ms", time.Since(st).Milliseconds())
 	if b.block.Rows() != 0 {
 		if err = b.conn.sendData(b.block, ""); err != nil {
 			return err

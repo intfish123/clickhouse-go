@@ -60,7 +60,7 @@ func (b *Block) OpenConcurrentWrite() error {
 	}
 	b.writeThreadSize = wts
 	for i := 0; i < wts; i++ {
-		b.writeChans = append(b.writeChans, make(chan *Payload, 10000))
+		b.writeChans = append(b.writeChans, make(chan *Payload, 500))
 	}
 	for _, writeChan := range b.writeChans {
 		ch := writeChan
@@ -109,8 +109,8 @@ func (b *Block) CloseConcurrentWrite() error {
 	for _, writeChan := range b.writeChans {
 		close(writeChan)
 	}
-	b.ConcurrentWriteFlag.Store(false)
 	b.wg.Wait()
+	b.ConcurrentWriteFlag.Store(false)
 	if b.lastErr.Load() != nil {
 		err := b.lastErr.Load()
 		if e, ok := err.(*BlockError); ok {
