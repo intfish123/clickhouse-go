@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/ClickHouse/ch-go/proto"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/column"
@@ -151,6 +152,7 @@ func (b *Block) Append(v ...interface{}) (err error) {
 			return nil
 		}
 
+		st := time.Now()
 		beginIdx := 0
 		for i := 0; i < b.writeThreadSize; i++ {
 			if beginIdx >= len(columns) {
@@ -173,6 +175,7 @@ func (b *Block) Append(v ...interface{}) (err error) {
 
 			beginIdx += b.ColBatchSize
 		}
+		fmt.Printf("write writeChans duration %v ms with %v threads\n", time.Since(st).Milliseconds(), b.writeThreadSize)
 	} else {
 		for i, val := range v {
 			if err := b.Columns[i].AppendRow(val); err != nil {
