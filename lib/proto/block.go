@@ -170,10 +170,11 @@ func (b *Block) Append(v ...interface{}) (err error) {
 				tmpIdx = append(tmpIdx, j)
 				tmpVal = append(tmpVal, v[j])
 			}
+			chi := i
 			mwg.Add(1)
 			go func() {
 				defer mwg.Done()
-				b.writeChans[i] <- &Payload{idxs: tmpIdx, vals: tmpVal}
+				b.writeChans[chi] <- &Payload{idxs: tmpIdx, vals: tmpVal}
 			}()
 			beginIdx += b.ColBatchSize
 		}
