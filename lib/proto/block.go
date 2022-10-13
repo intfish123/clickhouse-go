@@ -151,6 +151,7 @@ func (b *Block) Append(v ...interface{}) (err error) {
 		}
 
 		//st := time.Now()
+		mwg := sync.WaitGroup{}
 		beginIdx := 0
 		for i := 0; i < b.writeThreadSize; i++ {
 			if beginIdx >= len(columns) {
@@ -169,10 +170,14 @@ func (b *Block) Append(v ...interface{}) (err error) {
 				tmpIdx = append(tmpIdx, j)
 				tmpVal = append(tmpVal, v[j])
 			}
-			b.writeChans[i] <- &Payload{idxs: tmpIdx, vals: tmpVal}
-
+			mwg.Add(1)
+			go func() {
+				defer mwg.Done()
+				b.writeChans[i] <- &Payload{idxs: tmpIdx, vals: tmpVal}
+			}()
 			beginIdx += b.ColBatchSize
 		}
+		mwg.Wait()
 		//fmt.Printf("write writeChans duration %v ms with %v threads\n", time.Since(st).Milliseconds(), b.writeThreadSize)
 	} else {
 		for i, val := range v {
