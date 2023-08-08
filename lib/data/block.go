@@ -226,9 +226,17 @@ func (block *Block) asyncAppendRow(payloadChan chan *Payload) {
 			errCh := block.ErrChan
 			switch column := c.(type) {
 			case *column.Array:
-				value := reflect.ValueOf(payload.Vals[num])
+				payloadData := payload.Vals[num]
+				if payloadData == nil {
+					payloadData = []interface{}{}
+				}
+				value := reflect.ValueOf(payloadData)
 				if value.Kind() != reflect.Slice {
-					errCh <- fmt.Errorf("unsupported Array(T) type [%T]", value.Interface())
+					if value.Kind() != reflect.Invalid {
+						errCh <- fmt.Errorf("unsupported Array(T) type [%T]", value.Interface())
+					} else {
+						errCh <- fmt.Errorf("unsupported Array(T) type [nil]")
+					}
 				}
 				if err := block.writeArray(c, newValue(value), idx[num], 1); err != nil {
 					errCh <- err
